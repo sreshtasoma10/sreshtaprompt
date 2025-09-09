@@ -1,69 +1,48 @@
 import streamlit as st
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 
-# =========================
-# Google Sheets Setup
-# =========================
-def get_gsheet_client():
-    try:
-        creds = {
-            "type": st.secrets["gcp_service_account"]["type"],
-            "project_id": st.secrets["gcp_service_account"]["project_id"],
-            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
-            "private_key": st.secrets["gcp_service_account"]["private_key"],
-            "client_email": st.secrets["gcp_service_account"]["client_email"],
-            "client_id": st.secrets["gcp_service_account"]["client_id"],
-            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
-        }
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        credentials = Credentials.from_service_account_info(creds, scopes=scope)
-        client = gspread.authorize(credentials)
-        return client
-    except Exception as e:
-        st.error(f"❌ Error connecting to Google Sheets: {e}")
-        st.stop()
+# ----------------------
+# GOOGLE SHEETS SETUP
+# ----------------------
+SCOPE = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
-# =========================
-# Save Persona Function
-# =========================
-def save_persona_to_gsheet(persona):
-    client = get_gsheet_client()
-    try:
-        sheet = client.open("prompts_generated").sheet1  # ✅ your sheet name
-        sheet.append_row([
-            persona["id"],
-            persona["name"],
-            persona["dob"],
-            persona["profession"],
-            persona["description"]
-        ])
-        st.success("✅ Persona saved successfully to Google Sheets!")
-    except Exception as e:
-        st.error(f"❌ Error saving persona: {e}")
+# Load credentials.json
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
+client = gspread.authorize(creds)
 
-# =========================
-# Main Streamlit App
-# =========================
-st.set_page_config(page_title="Persona Generator", layout="centered")
+# Spreadsheet file name
+SHEET_NAME = "prompts_generated"
+
+try:
+    sheet = client.open(SHEET_NAME).sheet1
+except gspread.SpreadsheetNotFound:
+    st.error(f"Spreadsheet '{SHEET_NAME}' not found. Please check the name in Google Drive.")
+    st.stop()
+
+# ----------------------
+# STREAMLIT APP
+# ----------------------
+st.set_page_config(page_title="Character Persona Generator", layout="centered")
 st.title("📝 Character Persona Generator")
 
-# Number of personas
+# Input: Number of personas
 num_personas = st.number_input("Enter number of personas (max 10):", min_value=1, max_value=10, value=1)
 
 if "persona_inputs" not in st.session_state:
     st.session_state.persona_inputs = {}
 
-# Keep session state synced
+# Sync session state
 current_keys = list(st.session_state.persona_inputs.keys())
 for key in current_keys:
     if int(key.split("_")[-1]) >= num_personas:
         del st.session_state.persona_inputs[key]
 
-# Input fields
+# Create input fields
 for i in range(int(num_personas)):
     if f"name_{i}" not in st.session_state.persona_inputs:
         st.session_state.persona_inputs[f"name_{i}"] = ""
@@ -74,6 +53,7 @@ for i in range(int(num_personas)):
     if f"description_{i}" not in st.session_state.persona_inputs:
         st.session_state.persona_inputs[f"description_{i}"] = ""
 
+# Form for multiple personas
 with st.form("persona_form"):
     for i in range(int(num_personas)):
         st.subheader(f"Character {i+1}")
@@ -91,6 +71,25 @@ with st.form("persona_form"):
         )
 
     submitted = st.form_submit_button("💾 Save All Personas")
+
+# ----------------------
+# Save personas to Google Sheets
+# ----------------------
+def save_persona_to_sheet(persona):
+    """Append a single persona to the Google Sheet."""
+    try:
+        sheet.append_row([
+            persona["id"],
+            persona["name"],
+            persona["dob"],
+            persona["profession"],
+            persona["description"],
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ])
+        return True
+    except Exception as e:
+        st.error(f"❌ Error saving persona: {e}")
+        return False
 
 if submitted:
     all_personas = []
@@ -111,20 +110,21 @@ if submitted:
             "profession": profession,
             "description": description,
         }
-        all_personas.append(persona)
-        save_persona_to_gsheet(persona)
+        if save_persona_to_sheet(persona):
+            all_personas.append(persona)
 
     if all_personas:
-        st.success("🎉 All personas saved!")
+        st.success(f"🎉 Saved {len(all_personas)} personas to Google Sheets!")
 
-# =========================
-# View Saved Data
-# =========================
+# ----------------------
+# Display all saved personas
+# ----------------------
 if st.button("📂 View All Personas in Sheet"):
-    client = get_gsheet_client()
-    sheet = client.open("prompts_generated").sheet1
-    data = sheet.get_all_records()
-    if data:
-        st.dataframe(data)
-    else:
-        st.info("No personas saved yet.")
+    try:
+        data = sheet.get_all_records()
+        if data:
+            st.dataframe(data)
+        else:
+            st.info("No personas saved yet.")
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {e}")
